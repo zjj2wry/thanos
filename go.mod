@@ -72,7 +72,8 @@ require (
 // See https://github.com/thanos-io/thanos/issues/1415
 replace (
 	// Make sure Cortex is not forcing us to some other Prometheus version.
-	github.com/prometheus/prometheus => github.com/prometheus/prometheus v1.8.2-0.20200707115909-30505a202a4c
+	// TODO: This points to https://github.com/prometheus/prometheus/pull/7069 fix once merged.
+	github.com/prometheus/prometheus => github.com/prometheus/prometheus v1.8.2-0.20200710110332-22d52d35242f
 	k8s.io/klog => k8s.io/klog v0.3.1
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20190228160746-b3a7cee44a30
 )

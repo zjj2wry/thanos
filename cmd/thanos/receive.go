@@ -102,6 +102,10 @@ func registerReceive(app *extkingpin.App) {
 			"about order.").
 		Default("false").Hidden().Bool()
 
+	enableRateLimit := cmd.Flag("enable-rate-limit", "").Default("true").Bool()
+	rateLimit := cmd.Flag("rate-limit", "").Default("1000").Float64()
+	rateLimitBurst := cmd.Flag("rate-limit-burst", "").Default("500").Int()
+
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, tracer opentracing.Tracer, _ <-chan struct{}, _ bool) error {
 		lset, err := parseFlagLabels(*labelStrs)
 		if err != nil {
@@ -171,6 +175,9 @@ func registerReceive(app *extkingpin.App) {
 			*allowOutOfOrderUpload,
 			component.Receive,
 			metadata.HashFunc(*hashFunc),
+			*enableRateLimit,
+			*rateLimit,
+			*rateLimitBurst,
 		)
 	})
 }
@@ -213,6 +220,9 @@ func runReceive(
 	allowOutOfOrderUpload bool,
 	comp component.SourceStoreAPI,
 	hashFunc metadata.HashFunc,
+	enableRateLimit bool,
+	rateLimit float64,
+	rateLimitBurst int,
 ) error {
 	logger = log.With(logger, "component", "receive")
 	level.Warn(logger).Log("msg", "setting up receive")
@@ -280,6 +290,9 @@ func runReceive(
 		TLSConfig:         rwTLSConfig,
 		DialOpts:          dialOpts,
 		ForwardTimeout:    forwardTimeout,
+		EnableRateLimit:   enableRateLimit,
+		RateLimit:         rateLimit,
+		RateLimitBurst:    rateLimitBurst,
 	})
 
 	grpcProbe := prober.NewGRPC()

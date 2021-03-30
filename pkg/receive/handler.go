@@ -7,15 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
-	stdlog "log"
-	"net"
-	"net/http"
-	"sort"
-	"strconv"
-	"sync"
-	"time"
-
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/gogo/protobuf/proto"
@@ -32,6 +23,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"io/ioutil"
+	stdlog "log"
+	"math"
+	"net"
+	"net/http"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/thanos-io/thanos/pkg/errutil"
 	extpromhttp "github.com/thanos-io/thanos/pkg/extprom/http"
@@ -40,6 +40,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 	"github.com/thanos-io/thanos/pkg/tracing"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -79,6 +80,9 @@ type Options struct {
 	TLSConfig         *tls.Config
 	DialOpts          []grpc.DialOption
 	ForwardTimeout    time.Duration
+	EnableRateLimit   bool
+	RateLimit         float64
+	RateLimitBurst    int
 }
 
 // Handler serves a Prometheus remote write receiving HTTP endpoint.
@@ -161,10 +165,17 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 		return ins.NewHandler(name, http.HandlerFunc(next))
 	}
 
+	if h.options.EnableRateLimit {
+		limiter.SetBurst(h.options.RateLimitBurst)
+		limiter.SetLimit(rate.Limit(h.options.RateLimit))
+	}
+
 	h.router.Post("/api/v1/receive", instrf("receive", readyf(middleware.RequestID(http.HandlerFunc(h.receiveHTTP)))))
 
 	return h
 }
+
+var limiter = rate.NewLimiter(rate.Inf, math.MaxInt64)
 
 // Hashring sets the hashring for the handler and marks the hashring as ready.
 // The hashring must be set to a non-nil value in order for the
@@ -274,6 +285,13 @@ func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenant string, 
 }
 
 func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.options.EnableRateLimit {
+		if limiter.Allow() == false {
+			http.Error(w, http.StatusText(429), http.StatusTooManyRequests)
+			return
+		}
+	}
+
 	span, ctx := tracing.StartSpan(r.Context(), "receive_http")
 	defer span.Finish()
 
@@ -456,9 +474,11 @@ func (h *Handler) fanoutForward(pctx context.Context, tenant string, replicas ma
 				defer wg.Done()
 
 				var err error
+				now := time.Now()
 				tracing.DoInSpan(fctx, "receive_tsdb_write", func(_ context.Context) {
 					err = h.writer.Write(fctx, tenant, wreqs[endpoint])
 				})
+				fmt.Println(time.Since(now), "tsdb write", err)
 				if err != nil {
 					// When a MultiError is added to another MultiError, the error slices are concatenated, not nested.
 					// To avoid breaking the counting logic, we need to flatten the error.
